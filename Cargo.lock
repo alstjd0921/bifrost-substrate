@@ -954,7 +954,7 @@ dependencies = [
 [[package]]
 name = "br-primitives"
 version = "0.1.0"
-source = "git+https://github.com/alstjd0921/bifrost-relayer.rs?branch=with-R#5819fda77e493854345df7ce4094a6b1706e8249"
+source = "git+https://github.com/alstjd0921/bifrost-relayer.rs?branch=with-R#1a7afb7d87b8e88273a912060ea85da25880c804"
 dependencies = [
  "async-trait",
  "chrono",
