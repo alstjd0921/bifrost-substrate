@@ -14,7 +14,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 array-bytes = "4.1"
-br-primitives = { default-features = false, git = "https://github.com/bifrost-platform/bifrost-relayer.rs", branch = "main" }
+br-primitives = { default-features = false, git = "https://github.com/alstjd0921/bifrost-relayer.rs", branch = "with-R" }
 chrono = "0.4.31"
 clap = { version = "4.2.5", features = ["derive", "string"] }
 fdlimit = "0.2.1"
