@@ -22,6 +22,7 @@ use crate::{
 	arg_enums::Database, error::Result, DatabaseParams, ImportParams, KeystoreParams,
 	NetworkParams, NodeKeyParams, OffchainWorkerParams, PruningParams, SharedParams, SubstrateCli,
 };
+use br_primitives::cli::{Configuration as RelayerConfiguration, RelayerConfig};
 use log::warn;
 use names::{Generator, Name};
 use sc_client_api::execution_extensions::ExecutionStrategies;
@@ -107,6 +108,11 @@ pub trait CliConfiguration<DCV: DefaultConfigurationValues = ()>: Sized {
 
 	/// Get the NetworkParams for this object
 	fn network_params(&self) -> Option<&NetworkParams> {
+		None
+	}
+
+	/// Get bifrost-relayer config
+	fn relayer_config(&self, tokio_handle: tokio::runtime::Handle) -> Option<RelayerConfiguration> {
 		None
 	}
 
@@ -484,6 +490,7 @@ pub trait CliConfiguration<DCV: DefaultConfigurationValues = ()>: Sized {
 		let keystore = self.keystore_config(&config_dir)?;
 		let telemetry_endpoints = self.telemetry_endpoints(&chain_spec)?;
 		let runtime_cache_size = self.runtime_cache_size()?;
+		let relayer_config = self.relayer_config(tokio_handle.clone());
 
 		Ok(Configuration {
 			impl_name: C::impl_name(),
@@ -535,6 +542,7 @@ pub trait CliConfiguration<DCV: DefaultConfigurationValues = ()>: Sized {
 			base_path,
 			informant_output_format: Default::default(),
 			runtime_cache_size,
+			relayer_config,
 		})
 	}
 
@@ -645,7 +653,7 @@ pub fn generate_node_name() -> String {
 		let count = node_name.chars().count();
 
 		if count < NODE_NAME_MAX_LENGTH {
-			return node_name
+			return node_name;
 		}
 	}
 }

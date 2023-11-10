@@ -32,6 +32,7 @@ pub use sc_network::{
 	Multiaddr,
 };
 
+use br_primitives::cli::{RelayerConfig, Configuration as RelayerConfiguration};
 use prometheus_endpoint::Registry;
 use sc_chain_spec::ChainSpec;
 pub use sc_telemetry::TelemetryEndpoints;
@@ -140,6 +141,8 @@ pub struct Configuration {
 	pub informant_output_format: sc_informant::OutputFormat,
 	/// Maximum number of different runtime versions that can be cached.
 	pub runtime_cache_size: u8,
+	/// Relayer config
+	pub relayer_config: Option<RelayerConfiguration>,
 }
 
 /// Type for tasks spawned by the executor.

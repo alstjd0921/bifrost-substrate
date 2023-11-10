@@ -22,6 +22,7 @@ test-helpers = []
 runtime-benchmarks = ["sc-client-db/runtime-benchmarks"]
 
 [dependencies]
+br-primitives = { default-features = false, git = "https://github.com/bifrost-platform/bifrost-relayer.rs", branch = "main" }
 jsonrpsee = { version = "0.16.2", features = ["server"] }
 thiserror = "1.0.30"
 futures = "0.3.21"

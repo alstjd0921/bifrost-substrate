@@ -270,6 +270,7 @@ fn node_config<
 		data_path: root,
 		informant_output_format: Default::default(),
 		runtime_cache_size: 2,
+		relayer_config: None,
 	}
 }
 

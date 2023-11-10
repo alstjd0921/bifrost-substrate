@@ -22,6 +22,8 @@
 #![warn(unused_extern_crates)]
 #![warn(unused_imports)]
 
+extern crate core;
+
 use clap::{CommandFactory, FromArgMatches, Parser};
 use sc_service::Configuration;
 

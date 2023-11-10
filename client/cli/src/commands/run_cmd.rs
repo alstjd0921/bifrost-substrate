@@ -27,6 +27,10 @@ use crate::{
 	RPC_DEFAULT_MAX_CONNECTIONS, RPC_DEFAULT_MAX_REQUEST_SIZE_MB, RPC_DEFAULT_MAX_RESPONSE_SIZE_MB,
 	RPC_DEFAULT_MAX_SUBS_PER_CONN,
 };
+use br_primitives::{
+	cli::{Configuration as RelayerConfiguration, RelayerConfig},
+	errors::{INVALID_CONFIG_FILE_PATH, INVALID_CONFIG_FILE_STRUCTURE},
+};
 use clap::Parser;
 use regex::Regex;
 use sc_service::{
@@ -193,6 +197,14 @@ pub struct RunCmd {
 	/// When `--dev` is given and no explicit `--base-path`, this option is implied.
 	#[arg(long, conflicts_with = "base_path")]
 	pub tmp: bool,
+
+	/// Run with bifrost-relayer
+	#[arg(long)]
+	pub relayer: bool,
+
+	#[allow(missing_docs)]
+	#[arg(long)]
+	pub relayer_config_path: Option<String>,
 }
 
 impl RunCmd {
@@ -231,16 +243,56 @@ impl CliConfiguration for RunCmd {
 		Some(&self.import_params)
 	}
 
-	fn network_params(&self) -> Option<&NetworkParams> {
-		Some(&self.network_params)
-	}
-
 	fn keystore_params(&self) -> Option<&KeystoreParams> {
 		Some(&self.keystore_params)
 	}
 
+	fn network_params(&self) -> Option<&NetworkParams> {
+		Some(&self.network_params)
+	}
+
 	fn offchain_worker_params(&self) -> Option<&OffchainWorkerParams> {
 		Some(&self.offchain_worker_params)
+	}
+
+	fn relayer_config(&self, tokio_handle: tokio::runtime::Handle) -> Option<RelayerConfiguration> {
+		if self.relayer {
+			if let Some(relayer_config_path) = &self.relayer_config_path {
+				let relayer_config: RelayerConfig = serde_yaml::from_reader(
+					std::fs::File::open(relayer_config_path).expect(INVALID_CONFIG_FILE_PATH),
+				)
+				.expect(INVALID_CONFIG_FILE_STRUCTURE);
+				Option::from(RelayerConfiguration { relayer_config, tokio_handle })
+			} else {
+				panic!("{}", INVALID_CONFIG_FILE_PATH);
+			}
+		} else {
+			None
+		}
+	}
+
+	fn base_path(&self) -> Result<Option<BasePath>> {
+		Ok(if self.tmp {
+			Some(BasePath::new_temp_dir()?)
+		} else {
+			match self.shared_params().base_path()? {
+				Some(r) => Some(r),
+				// If `dev` is enabled, we use the temp base path.
+				None if self.shared_params().is_dev() => Some(BasePath::new_temp_dir()?),
+				None => None,
+			}
+		})
+	}
+
+	fn role(&self, is_dev: bool) -> Result<Role> {
+		let keyring = self.get_keyring();
+		let is_authority = self.validator || is_dev || keyring.is_some();
+
+		Ok(if is_authority { Role::Authority } else { Role::Full })
+	}
+
+	fn transaction_pool(&self, is_dev: bool) -> Result<TransactionPoolOptions> {
+		Ok(self.pool_config.transaction_pool(is_dev))
 	}
 
 	fn node_name(&self) -> Result<String> {
@@ -260,57 +312,19 @@ impl CliConfiguration for RunCmd {
 		Ok(name)
 	}
 
-	fn dev_key_seed(&self, is_dev: bool) -> Result<Option<String>> {
-		Ok(self.get_keyring().map(|a| format!("//{}", a)).or_else(|| {
-			if is_dev {
-				Some("//Alice".into())
-			} else {
-				None
-			}
-		}))
+	fn rpc_addr(&self, default_listen_port: u16) -> Result<Option<SocketAddr>> {
+		let interface = rpc_interface(
+			self.rpc_external,
+			self.unsafe_rpc_external,
+			self.rpc_methods,
+			self.validator,
+		)?;
+
+		Ok(Some(SocketAddr::new(interface, self.rpc_port.unwrap_or(default_listen_port))))
 	}
 
-	fn telemetry_endpoints(
-		&self,
-		chain_spec: &Box<dyn ChainSpec>,
-	) -> Result<Option<TelemetryEndpoints>> {
-		let params = &self.telemetry_params;
-		Ok(if params.no_telemetry {
-			None
-		} else if !params.telemetry_endpoints.is_empty() {
-			Some(
-				TelemetryEndpoints::new(params.telemetry_endpoints.clone())
-					.map_err(|e| e.to_string())?,
-			)
-		} else {
-			chain_spec.telemetry_endpoints().clone()
-		})
-	}
-
-	fn role(&self, is_dev: bool) -> Result<Role> {
-		let keyring = self.get_keyring();
-		let is_authority = self.validator || is_dev || keyring.is_some();
-
-		Ok(if is_authority { Role::Authority } else { Role::Full })
-	}
-
-	fn force_authoring(&self) -> Result<bool> {
-		// Imply forced authoring on --dev
-		Ok(self.shared_params.dev || self.force_authoring)
-	}
-
-	fn prometheus_config(
-		&self,
-		default_listen_port: u16,
-		chain_spec: &Box<dyn ChainSpec>,
-	) -> Result<Option<PrometheusConfig>> {
-		Ok(self
-			.prometheus_params
-			.prometheus_config(default_listen_port, chain_spec.id().to_string()))
-	}
-
-	fn disable_grandpa(&self) -> Result<bool> {
-		Ok(self.no_grandpa)
+	fn rpc_methods(&self) -> Result<sc_service::config::RpcMethods> {
+		Ok(self.rpc_methods.into())
 	}
 
 	fn rpc_max_connections(&self) -> Result<u32> {
@@ -338,21 +352,6 @@ impl CliConfiguration for RunCmd {
 			.into())
 	}
 
-	fn rpc_addr(&self, default_listen_port: u16) -> Result<Option<SocketAddr>> {
-		let interface = rpc_interface(
-			self.rpc_external,
-			self.unsafe_rpc_external,
-			self.rpc_methods,
-			self.validator,
-		)?;
-
-		Ok(Some(SocketAddr::new(interface, self.rpc_port.unwrap_or(default_listen_port))))
-	}
-
-	fn rpc_methods(&self) -> Result<sc_service::config::RpcMethods> {
-		Ok(self.rpc_methods.into())
-	}
-
 	fn rpc_max_request_size(&self) -> Result<u32> {
 		Ok(self.rpc_max_request_size)
 	}
@@ -365,8 +364,50 @@ impl CliConfiguration for RunCmd {
 		Ok(self.rpc_max_subscriptions_per_connection)
 	}
 
-	fn transaction_pool(&self, is_dev: bool) -> Result<TransactionPoolOptions> {
-		Ok(self.pool_config.transaction_pool(is_dev))
+	fn prometheus_config(
+		&self,
+		default_listen_port: u16,
+		chain_spec: &Box<dyn ChainSpec>,
+	) -> Result<Option<PrometheusConfig>> {
+		Ok(self
+			.prometheus_params
+			.prometheus_config(default_listen_port, chain_spec.id().to_string()))
+	}
+
+	fn telemetry_endpoints(
+		&self,
+		chain_spec: &Box<dyn ChainSpec>,
+	) -> Result<Option<TelemetryEndpoints>> {
+		let params = &self.telemetry_params;
+		Ok(if params.no_telemetry {
+			None
+		} else if !params.telemetry_endpoints.is_empty() {
+			Some(
+				TelemetryEndpoints::new(params.telemetry_endpoints.clone())
+					.map_err(|e| e.to_string())?,
+			)
+		} else {
+			chain_spec.telemetry_endpoints().clone()
+		})
+	}
+
+	fn force_authoring(&self) -> Result<bool> {
+		// Imply forced authoring on --dev
+		Ok(self.shared_params.dev || self.force_authoring)
+	}
+
+	fn disable_grandpa(&self) -> Result<bool> {
+		Ok(self.no_grandpa)
+	}
+
+	fn dev_key_seed(&self, is_dev: bool) -> Result<Option<String>> {
+		Ok(self.get_keyring().map(|a| format!("//{}", a)).or_else(|| {
+			if is_dev {
+				Some("//Alice".into())
+			} else {
+				None
+			}
+		}))
 	}
 
 	fn max_runtime_instances(&self) -> Result<Option<usize>> {
@@ -376,38 +417,25 @@ impl CliConfiguration for RunCmd {
 	fn runtime_cache_size(&self) -> Result<u8> {
 		Ok(self.runtime_params.runtime_cache_size)
 	}
-
-	fn base_path(&self) -> Result<Option<BasePath>> {
-		Ok(if self.tmp {
-			Some(BasePath::new_temp_dir()?)
-		} else {
-			match self.shared_params().base_path()? {
-				Some(r) => Some(r),
-				// If `dev` is enabled, we use the temp base path.
-				None if self.shared_params().is_dev() => Some(BasePath::new_temp_dir()?),
-				None => None,
-			}
-		})
-	}
 }
 
 /// Check whether a node name is considered as valid.
 pub fn is_node_name_valid(_name: &str) -> std::result::Result<(), &str> {
 	let name = _name.to_string();
 	if name.chars().count() >= crate::NODE_NAME_MAX_LENGTH {
-		return Err("Node name too long")
+		return Err("Node name too long");
 	}
 
 	let invalid_chars = r"[\\.@]";
 	let re = Regex::new(invalid_chars).unwrap();
 	if re.is_match(&name) {
-		return Err("Node name should not contain invalid chars such as '.' and '@'")
+		return Err("Node name should not contain invalid chars such as '.' and '@'");
 	}
 
 	let invalid_patterns = r"(https?:\\/+)?(www)+";
 	let re = Regex::new(invalid_patterns).unwrap();
 	if re.is_match(&name) {
-		return Err("Node name should not contain urls")
+		return Err("Node name should not contain urls");
 	}
 
 	Ok(())
@@ -425,7 +453,7 @@ fn rpc_interface(
 			 a validator. Use `--unsafe-rpc-external` or `--rpc-methods=unsafe` if you understand \
 			 the risks. See the options description for more information."
 				.to_owned(),
-		))
+		));
 	}
 
 	if is_external || is_unsafe_external {
@@ -470,7 +498,7 @@ fn parse_cors(s: &str) -> Result<Cors> {
 		match part {
 			"all" | "*" => {
 				is_all = true;
-				break
+				break;
 			},
 			other => origins.push(other.to_owned()),
 		}
